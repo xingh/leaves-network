@@ -1,0 +1,40 @@
+
+# Docker image with Python and Docker pre-installed
+image: gitpod/workspace-python-3.12
+ 
+# Tasks to run on workspace startup
+tasks:
+  - name: Setup Environment
+    init: |      
+      # Install Claude Code CLI
+      npm install -g @anthropic/claude-code
+      
+      # Create output directory for generated configs
+      mkdir -p output
+      
+      echo "Environment setup complete!"      
+      echo "Claude Code installed. Run 'claude' to start."
+    command: |
+      # Start Claude Code automatically
+      echo "Starting Claude Code..."
+      claude
+
+# Ports configuration
+ports:
+  - port: 8080
+    description: Web Server
+    onOpen: notify
+    visibility: private  
+
+# VS Code extensions
+vscode:
+  extensions:
+    - ms-python.python    
+
+# Additional workspace configuration
+gitConfig:
+  alias.st: status
+  alias.co: checkout
+  alias.br: branch
+  alias.ci: commit
+  alias.lg: log --oneline --graph --decorate

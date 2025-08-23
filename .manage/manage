@@ -1,0 +1,688 @@
+#!/usr/bin/env bash
+# Project Management Utility - Portable bash script for project maintenance
+# Usage: ./manage [command] [options]
+
+set -e
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly MANAGE_DIR="${PROJECT_ROOT}/.manage"
+readonly ARCHIVE_BASE="${PROJECT_ROOT}/.archive"
+readonly VERSION="1.0.0"
+
+# Files to archive (everything except ROADMAP.md)
+readonly -a ARCHIVE_FILES=(
+    "ISSUES.md"
+    "SOLUTION_SUMMARY.md"
+    "PROJECT.md"
+    "TASKS.json"
+    "*.tmp"
+    "*.bak"
+)
+
+# Temporary file patterns
+readonly -a TEMP_PATTERNS=(
+    "*.tmp"
+    "*.bak"
+    "*.swp"
+    "*.swo"
+    "*~"
+    ".DS_Store"
+    "Thumbs.db"
+)
+
+# Cache directories
+readonly -a CACHE_DIRS=(
+    "__pycache__"
+    ".pytest_cache"
+    ".mypy_cache"
+    "*.egg-info"
+    "build"
+    "dist"
+)
+
+# Additional cache directories for deep clean
+readonly -a DEEP_CACHE_DIRS=(
+    "node_modules"
+    ".venv"
+    "venv"
+    ".tox"
+    ".coverage"
+    "htmlcov"
+)
+
+# =============================================================================
+# Color codes for output
+# =============================================================================
+
+if [[ -t 1 ]]; then
+    readonly RED='\033[0;31m'
+    readonly GREEN='\033[0;32m'
+    readonly YELLOW='\033[1;33m'
+    readonly BLUE='\033[0;34m'
+    readonly MAGENTA='\033[0;35m'
+    readonly CYAN='\033[0;36m'
+    readonly NC='\033[0m' # No Color
+else
+    readonly RED=''
+    readonly GREEN=''
+    readonly YELLOW=''
+    readonly BLUE=''
+    readonly MAGENTA=''
+    readonly CYAN=''
+    readonly NC=''
+fi
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
+print_error() {
+    echo -e "${RED}❌ ERROR: $1${NC}" >&2
+}
+
+print_success() {
+    echo -e "${GREEN}✅ SUCCESS: $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  WARNING: $1${NC}"
+}
+
+print_info() {
+    echo -e "${CYAN}ℹ️  INFO: $1${NC}"
+}
+
+print_header() {
+    echo -e "${MAGENTA}═══════════════════════════════════════════${NC}"
+    echo -e "${MAGENTA}  $1${NC}"
+    echo -e "${MAGENTA}═══════════════════════════════════════════${NC}"
+}
+
+generate_timestamp() {
+    date '+%Y.%m.%d.%H.%M.%S'
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+is_git_repo() {
+    git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1
+}
+
+get_git_branch() {
+    if is_git_repo; then
+        git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null || echo "detached"
+    else
+        echo "not-a-git-repo"
+    fi
+}
+
+get_git_status() {
+    if is_git_repo; then
+        local modified=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null | grep -c "^ M" || true)
+        local added=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null | grep -c "^A" || true)
+        local deleted=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null | grep -c "^D" || true)
+        local untracked=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null | grep -c "^??" || true)
+        
+        echo "Modified: $modified, Added: $added, Deleted: $deleted, Untracked: $untracked"
+    else
+        echo "Not a git repository"
+    fi
+}
+
+calculate_size() {
+    local path="$1"
+    if [[ -d "$path" ]]; then
+        du -sb "$path" 2>/dev/null | cut -f1 || echo 0
+    elif [[ -f "$path" ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            stat -f%z "$path" 2>/dev/null || echo 0
+        else
+            stat -c%s "$path" 2>/dev/null || echo 0
+        fi
+    else
+        echo 0
+    fi
+}
+
+format_bytes() {
+    local bytes=$1
+    if [[ $bytes -lt 1024 ]]; then
+        echo "${bytes}B"
+    elif [[ $bytes -lt 1048576 ]]; then
+        echo "$((bytes / 1024))KB"
+    else
+        echo "$((bytes / 1048576))MB"
+    fi
+}
+
+check_disk_usage() {
+    du -sh "$PROJECT_ROOT" 2>/dev/null | cut -f1 || echo "unknown"
+}
+
+# =============================================================================
+# Command Functions
+# =============================================================================
+
+cmd_init() {
+    local force=false
+    [[ "$1" == "--force" || "$1" == "-f" ]] && force=true
+    
+    print_header "Initializing Project Management Structure"
+    
+    # Create .manage directory if it doesn't exist
+    if [[ ! -d "$MANAGE_DIR" ]]; then
+        print_info "Creating .manage directory..."
+        mkdir -p "$MANAGE_DIR"
+        print_success "Created .manage directory"
+    else
+        print_info ".manage directory already exists"
+    fi
+    
+    # Create .archive directory if it doesn't exist
+    if [[ ! -d "$ARCHIVE_BASE" ]]; then
+        print_info "Creating .archive directory..."
+        mkdir -p "$ARCHIVE_BASE"
+        print_success "Created .archive directory"
+    else
+        print_info ".archive directory already exists"
+    fi
+    
+    # Create or update ROADMAP.md
+    if [[ ! -f "${MANAGE_DIR}/ROADMAP.md" ]] || $force; then
+        print_info "Creating ROADMAP.md..."
+        cat > "${MANAGE_DIR}/ROADMAP.md" << 'EOF'
+# Project Roadmap
+
+## Overview
+This document tracks the long-term vision and progress of the project.
+
+## Current Phase
+- [ ] Initial setup and configuration
+- [ ] Core functionality implementation
+- [ ] Testing and validation
+- [ ] Documentation and cleanup
+
+## Milestones
+
+### Phase 1: Foundation
+- Set up project structure
+- Define core interfaces
+- Implement basic functionality
+
+### Phase 2: Enhancement
+- Add advanced features
+- Optimize performance
+- Improve error handling
+
+### Phase 3: Production
+- Complete test coverage
+- Finalize documentation
+- Prepare for release
+
+## Technical Debt
+- Items that need refactoring or improvement
+
+## Future Considerations
+- Potential features and improvements for future releases
+
+## Notes
+This file is never archived and provides continuity across work sessions.
+EOF
+        print_success "Created ROADMAP.md"
+    else
+        print_info "ROADMAP.md already exists (use --force to overwrite)"
+    fi
+    
+    # Create ISSUES.md if it doesn't exist
+    if [[ ! -f "${MANAGE_DIR}/ISSUES.md" ]]; then
+        print_info "Creating ISSUES.md..."
+        cat > "${MANAGE_DIR}/ISSUES.md" << 'EOF'
+# Issues and Tasks
+
+## Active Issues
+
+### High Priority
+- [ ] Issue description here
+
+### Medium Priority
+- [ ] Issue description here
+
+### Low Priority
+- [ ] Issue description here
+
+## Completed Issues
+_Move completed items here before archiving_
+
+## Notes
+- This file should be archived at the end of each work session
+- Use `./manage archive` to preserve work session files
+EOF
+        print_success "Created ISSUES.md"
+    else
+        print_info "ISSUES.md already exists"
+    fi
+    
+    # Create PROJECT.md if it doesn't exist
+    if [[ ! -f "${MANAGE_DIR}/PROJECT.md" ]]; then
+        print_info "Creating PROJECT.md..."
+        cat > "${MANAGE_DIR}/PROJECT.md" << 'EOF'
+# Project Definition
+
+## Project Name
+[Project name here]
+
+## Description
+[Brief description of what this project does]
+
+## Goals
+1. Primary goal
+2. Secondary goal
+3. Additional goals
+
+## Requirements
+
+### Functional Requirements
+- Requirement 1
+- Requirement 2
+
+### Technical Requirements
+- Technology stack
+- Dependencies
+- Performance criteria
+
+## Architecture
+[High-level architecture description]
+
+## Implementation Plan
+1. Step 1
+2. Step 2
+3. Step 3
+
+## Success Criteria
+- Criteria 1
+- Criteria 2
+
+## Notes
+- This file should be archived at the end of each work session
+- Update as project requirements evolve
+EOF
+        print_success "Created PROJECT.md"
+    else
+        print_info "PROJECT.md already exists"
+    fi
+    
+    # Create .gitignore for .archive if needed
+    if [[ ! -f "${PROJECT_ROOT}/.gitignore" ]] || ! grep -q "^\.archive/" "${PROJECT_ROOT}/.gitignore" 2>/dev/null; then
+        if ! grep -q "^\.archive/" "${PROJECT_ROOT}/.gitignore" 2>/dev/null; then
+            print_info "Adding .archive/ to .gitignore..."
+            echo ".archive/" >> "${PROJECT_ROOT}/.gitignore"
+            print_success "Updated .gitignore"
+        fi
+    fi
+    
+    echo ""
+    print_success "Project management structure initialized!"
+    echo ""
+    print_info "Directory structure:"
+    echo "  .manage/           - Management files"
+    echo "    ├── manage       - This management script"
+    echo "    ├── ROADMAP.md   - Long-term project roadmap"
+    echo "    ├── ISSUES.md    - Current issues and tasks"
+    echo "    └── PROJECT.md   - Project definition"
+    echo "  .archive/          - Archived work sessions"
+    echo ""
+    print_info "Next steps:"
+    echo "  1. Edit ISSUES.md to add current tasks"
+    echo "  2. Update PROJECT.md with project details"
+    echo "  3. Use './manage status' to check project health"
+    echo "  4. Use './manage archive' to save work sessions"
+}
+
+cmd_archive() {
+    local message="${1:-Work session archived}"
+    local timestamp=$(generate_timestamp)
+    local archive_dir="${ARCHIVE_BASE}/.manage.${timestamp}"
+    
+    print_header "Archiving Management Files"
+    echo "Archive directory: ${archive_dir}"
+    mkdir -p "${archive_dir}"
+    
+    local -a archived_files=()
+    
+    # Archive each file
+    for pattern in "${ARCHIVE_FILES[@]}"; do
+        while IFS= read -r file; do
+            if [[ -f "$file" ]]; then
+                local filename=$(basename "$file")
+                # Skip ROADMAP.md
+                if [[ "$filename" == "ROADMAP.md" ]]; then
+                    continue
+                fi
+                
+                print_info "Archiving: $filename"
+                mv "$file" "${archive_dir}/"
+                archived_files+=("$filename")
+            fi
+        done < <(find "${MANAGE_DIR}" -maxdepth 1 -name "$pattern" -type f 2>/dev/null)
+    done
+    
+    # Create archive summary
+    cat > "${archive_dir}/ARCHIVE_SUMMARY.md" << EOF
+# Archive Summary
+
+**Date**: $(date '+%Y-%m-%d %H:%M:%S')
+**Timestamp**: ${timestamp}
+**Message**: ${message}
+
+## Archived Files
+
+$(if [[ ${#archived_files[@]} -gt 0 ]]; then
+    for file in "${archived_files[@]}"; do
+        echo "- $file"
+    done
+else
+    echo "No files were archived."
+fi)
+
+## Project State
+
+- **Git Branch**: $(get_git_branch)
+- **Last Commit**: $(git -C "$PROJECT_ROOT" log -1 --format='%h - %s' 2>/dev/null || echo "unknown")
+- **Uncommitted Changes**: $(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null | wc -l) files
+
+## Notes
+
+This archive was created automatically to preserve project management files
+from the work session. The ROADMAP.md file remains in .manage/ for continuity.
+EOF
+    
+    echo ""
+    if [[ ${#archived_files[@]} -gt 0 ]]; then
+        print_success "Archived ${#archived_files[@]} files to ${archive_dir}"
+        echo "Files archived:"
+        for file in "${archived_files[@]}"; do
+            echo "  - $file"
+        done
+    else
+        print_warning "No files found to archive"
+    fi
+}
+
+cmd_clean() {
+    local dry_run=false
+    local clean_all=false
+    
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --dry-run) dry_run=true; shift ;;
+            --all) clean_all=true; shift ;;
+            *) shift ;;
+        esac
+    done
+    
+    print_header "Cleaning Temporary Files"
+    
+    if $dry_run; then
+        print_warning "DRY RUN MODE - No files will be deleted"
+        echo ""
+    fi
+    
+    local cleaned_files=0
+    local cleaned_dirs=0
+    local total_size=0
+    
+    # Clean temporary files
+    print_info "Cleaning temporary files..."
+    for pattern in "${TEMP_PATTERNS[@]}"; do
+        while IFS= read -r file; do
+            local size=$(calculate_size "$file")
+            total_size=$((total_size + size))
+            
+            if $dry_run; then
+                echo "  Would delete: $file ($(format_bytes $size))"
+            else
+                rm -f "$file"
+                echo "  Deleted: $file ($(format_bytes $size))"
+            fi
+            cleaned_files=$((cleaned_files + 1))
+        done < <(find "$PROJECT_ROOT" -type f -name "$pattern" 2>/dev/null)
+    done
+    
+    # Clean cache directories
+    print_info "Cleaning cache directories..."
+    local -a dirs_to_clean=("${CACHE_DIRS[@]}")
+    if $clean_all; then
+        dirs_to_clean+=("${DEEP_CACHE_DIRS[@]}")
+    fi
+    
+    for dir_pattern in "${dirs_to_clean[@]}"; do
+        while IFS= read -r dir; do
+            local size=$(calculate_size "$dir")
+            total_size=$((total_size + size))
+            
+            if $dry_run; then
+                echo "  Would delete: $dir ($(format_bytes $size))"
+            else
+                rm -rf "$dir"
+                echo "  Deleted: $dir ($(format_bytes $size))"
+            fi
+            cleaned_dirs=$((cleaned_dirs + 1))
+        done < <(find "$PROJECT_ROOT" -type d -name "$dir_pattern" 2>/dev/null)
+    done
+    
+    # Summary
+    echo ""
+    print_header "Cleanup Summary"
+    
+    if $dry_run; then
+        print_warning "DRY RUN - Nothing was actually deleted"
+        echo "Would have cleaned:"
+    else
+        print_success "Cleanup completed"
+        echo "Cleaned:"
+    fi
+    
+    echo "  - Files: $cleaned_files"
+    echo "  - Directories: $cleaned_dirs"
+    echo "  - Total space: $(format_bytes $total_size)"
+    echo ""
+    print_info "Current project size: $(check_disk_usage)"
+}
+
+cmd_status() {
+    local verbose=false
+    [[ "$1" == "--verbose" || "$1" == "-v" ]] && verbose=true
+    
+    print_header "Project Status Report"
+    echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+    
+    # Project Information
+    print_info "Project Information"
+    echo "  Project Root: $PROJECT_ROOT"
+    echo "  Project Name: $(basename "$PROJECT_ROOT")"
+    echo "  Project Size: $(check_disk_usage)"
+    echo ""
+    
+    # Git Status
+    if is_git_repo; then
+        print_info "Git Repository"
+        echo "  Branch: $(get_git_branch)"
+        echo "  Status: $(get_git_status)"
+        
+        if $verbose; then
+            echo "  Last Commit:"
+            git -C "$PROJECT_ROOT" log -1 --format='    %h - %s (%cr by %an)' 2>/dev/null || echo "    No commits"
+        fi
+    else
+        print_warning "Not a Git repository"
+    fi
+    echo ""
+    
+    # Python Environment
+    print_info "Python Environment"
+    if command_exists python3; then
+        echo "  Python Version: $(python3 --version 2>&1 | cut -d' ' -f2)"
+    elif command_exists python; then
+        echo "  Python Version: $(python --version 2>&1 | cut -d' ' -f2)"
+    else
+        echo "  Python Version: not installed"
+    fi
+    
+    [[ -n "$VIRTUAL_ENV" ]] && echo "  Virtual Env: Active ($(basename "$VIRTUAL_ENV"))"
+    [[ -f "${PROJECT_ROOT}/pyproject.toml" ]] && echo "  Package Config: pyproject.toml found"
+    [[ -f "${PROJECT_ROOT}/requirements.txt" ]] && echo "  Requirements: requirements.txt found"
+    echo ""
+    
+    # Management Directory
+    print_info "Management Directory"
+    if [[ -d "$MANAGE_DIR" ]]; then
+        echo "  Location: $MANAGE_DIR"
+        local file_count=$(find "$MANAGE_DIR" -maxdepth 1 -type f | wc -l)
+        echo "  Files: $file_count"
+        
+        [[ -f "${MANAGE_DIR}/ROADMAP.md" ]] && echo "    ✓ ROADMAP.md"
+        [[ -f "${MANAGE_DIR}/ISSUES.md" ]] && echo "    ⚠ ISSUES.md (should be archived)"
+        [[ -f "${MANAGE_DIR}/PROJECT.md" ]] && echo "    ⚠ PROJECT.md (should be archived)"
+    fi
+    echo ""
+    
+    # Archive Directory
+    print_info "Archive Directory"
+    if [[ -d "$ARCHIVE_BASE" ]]; then
+        local archive_count=$(find "$ARCHIVE_BASE" -maxdepth 1 -type d -name ".manage.*" | wc -l)
+        echo "  Archives: $archive_count work sessions"
+    else
+        echo "  No archives found"
+    fi
+    echo ""
+    
+    # Health Checks
+    print_header "Health Checks"
+    
+    local issues=0
+    
+    # Check uncommitted changes
+    if is_git_repo; then
+        local uncommitted=$(git -C "$PROJECT_ROOT" status --porcelain 2>/dev/null | wc -l)
+        if [[ $uncommitted -gt 0 ]]; then
+            print_warning "Uncommitted changes: $uncommitted files"
+            issues=$((issues + 1))
+        else
+            print_success "No uncommitted changes"
+        fi
+    fi
+    
+    # Check temporary files
+    local temp_files=$(find "$PROJECT_ROOT" -type f \( -name "*.tmp" -o -name "*.bak" \) 2>/dev/null | wc -l)
+    if [[ $temp_files -gt 0 ]]; then
+        print_warning "Temporary files found: $temp_files"
+        issues=$((issues + 1))
+    else
+        print_success "No temporary files"
+    fi
+    
+    echo ""
+    if [[ $issues -eq 0 ]]; then
+        print_success "Project is in good health!"
+    else
+        print_warning "Found $issues issue(s) that may need attention"
+    fi
+}
+
+cmd_help() {
+    cat << EOF
+${MAGENTA}Project Management Utility v${VERSION}${NC}
+
+${CYAN}Usage:${NC}
+  $SCRIPT_NAME <command> [options]
+
+${CYAN}Commands:${NC}
+  ${GREEN}init${NC} [--force]         Initialize project management structure
+  ${GREEN}archive${NC} [message]      Archive management files with optional message
+  ${GREEN}clean${NC} [options]        Clean temporary files and caches
+                         Options: --dry-run, --all
+  ${GREEN}status${NC} [--verbose]     Show project status and health
+  ${GREEN}help${NC}                   Show this help message
+  ${GREEN}version${NC}                Show version information
+
+${CYAN}Examples:${NC}
+  $SCRIPT_NAME init
+  $SCRIPT_NAME init --force
+  $SCRIPT_NAME archive "Sprint completed"
+  $SCRIPT_NAME clean --dry-run
+  $SCRIPT_NAME clean --all
+  $SCRIPT_NAME status --verbose
+
+${CYAN}Directory Structure:${NC}
+  .manage/               Management directory
+    ├── manage          This script
+    └── ROADMAP.md      Project roadmap (never archived)
+  
+  .archive/             Archived work sessions
+    └── .manage.*       Timestamped archive directories
+
+${CYAN}For more information, see:${NC}
+  ${PROJECT_ROOT}/.manage/README.md
+EOF
+}
+
+cmd_version() {
+    echo "Project Management Utility v${VERSION}"
+    echo "Location: ${SCRIPT_DIR}/${SCRIPT_NAME}"
+    echo "Project: $(basename "$PROJECT_ROOT")"
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+main() {
+    # Check if no arguments provided
+    if [[ $# -eq 0 ]]; then
+        cmd_help
+        exit 0
+    fi
+    
+    # Parse command
+    local command="$1"
+    shift
+    
+    case "$command" in
+        init)
+            cmd_init "$@"
+            ;;
+        archive)
+            cmd_archive "$@"
+            ;;
+        clean)
+            cmd_clean "$@"
+            ;;
+        status)
+            cmd_status "$@"
+            ;;
+        help|--help|-h)
+            cmd_help
+            ;;
+        version|--version|-v)
+            cmd_version
+            ;;
+        *)
+            print_error "Unknown command: $command"
+            echo "Run '$SCRIPT_NAME help' for usage information"
+            exit 1
+            ;;
+    esac
+}
+
+# Run main function
+main "$@"
