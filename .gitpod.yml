@@ -1,40 +1,28 @@
 
 # Docker image with Python and Docker pre-installed
 image: gitpod/workspace-python-3.12
- 
-# Tasks to run on workspace startup
+
+# List the start up tasks. Learn more: https://www.gitpod.io/docs/configure/workspaces/tasks
 tasks:
+  - name: Script Task
+    init: echo 'init script' # runs during prebuild => https://www.gitpod.io/docs/configure/projects/prebuilds
+    command: echo 'start script'
   - name: Setup Environment
-    init: |      
-      # Install Claude Code CLI
-      npm install -g @anthropic/claude-code
-      
-      # Create output directory for generated configs
-      mkdir -p output
-      
-      echo "Environment setup complete!"      
+    init: |            
+      npm install -g @anthropic/claude-code   
       echo "Claude Code installed. Run 'claude' to start."
     command: |
       # Start Claude Code automatically
       echo "Starting Claude Code..."
       claude
 
-# Ports configuration
+# List the ports to expose. Learn more: https://www.gitpod.io/docs/configure/workspaces/ports
 ports:
-  - port: 8080
-    description: Web Server
-    onOpen: notify
-    visibility: private  
+  - name: Frontend
+    description: Port 3000 for the frontend
+    port: 3000
+    onOpen: open-preview
 
-# VS Code extensions
-vscode:
-  extensions:
-    - ms-python.python    
+# Learn more from ready-to-use templates: https://www.gitpod.io/docs/introduction/getting-started/quickstart
 
-# Additional workspace configuration
-gitConfig:
-  alias.st: status
-  alias.co: checkout
-  alias.br: branch
-  alias.ci: commit
-  alias.lg: log --oneline --graph --decorate
+ 
